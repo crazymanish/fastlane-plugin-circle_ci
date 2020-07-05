@@ -1,5 +1,6 @@
 *.bundle
 .bundle/
+*.gem
 
 ## Documentation cache and generated files:
 /.yardoc/
