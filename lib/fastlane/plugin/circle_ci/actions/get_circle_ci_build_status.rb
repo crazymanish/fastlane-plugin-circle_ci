@@ -19,7 +19,7 @@ module Fastlane
         api_url = "api/v1.1/project/#{vcs}/#{name}/#{project}/#{build}"
         curl_command = "curl -H 'Content-Type: application/json' -H 'Circle-Token: #{token}' -s #{uri}/#{api_url}"
 
-        result = Actions::sh("#{curl_command}", log: false)
+        result = Helper::CircleCiHelper.execute(curl_command)
 
         Actions.lane_context[SharedValues::GET_CIRCLE_CI_BUILD_STATUS_RESULT] = result
         result

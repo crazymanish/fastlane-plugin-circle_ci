@@ -25,7 +25,7 @@ module Fastlane
         api_url = "api/v1.1/project/#{vcs}/#{name}/#{project}/tree/#{branch}"
         curl_command = "curl -X POST -u #{token}: -H 'Content-Type: application/json' -d '{\"build_parameters\": #{parameters}}' -s #{uri}/#{api_url}"
 
-        result = Actions::sh("#{curl_command}", log: false)
+        result = Helper::CircleCiHelper.execute(curl_command)
 
         Actions.lane_context[SharedValues::TRIGGER_CIRCLE_CI_JOB_RESULT] = result
         result

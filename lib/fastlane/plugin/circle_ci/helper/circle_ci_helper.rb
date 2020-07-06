@@ -5,11 +5,11 @@ module Fastlane
 
   module Helper
     class CircleCiHelper
-      # class methods that you define here become available in your action
-      # as `Helper::CircleCiHelper.your_method`
-      #
-      def self.show_message
-        UI.message("Hello from the circle_ci plugin helper!")
+      def self.execute(curl_command)
+        response = Fastlane::Actions::sh("#{curl_command}", log: false)
+
+        require 'json'
+        JSON.parse(response) || {}
       end
     end
   end
