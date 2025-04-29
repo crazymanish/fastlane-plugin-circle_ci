@@ -91,7 +91,7 @@ module Fastlane
           next unless job["job_number"]
           
           # Get artifacts for this job
-          artifacts_result = Helper::CircleCiHelper.get_v2("project/#{project_slug}/job/#{job["job_number"]}/artifacts", api_token)
+          artifacts_result = Helper::CircleCiHelper.get_v2("project/#{project_slug}/#{job["job_number"]}/artifacts", api_token)
           artifacts = artifacts_result["items"]
           
           if artifacts.empty?
