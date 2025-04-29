@@ -27,26 +27,51 @@ module Fastlane
         pipelines = Helper::CircleCiHelper.get_v2("project/#{project_slug}/pipeline", api_token)
         
         # Find the latest pipeline for the specified branch
-        target_pipeline = pipelines["items"].find do |pipeline| 
-          pipeline["vcs"] && pipeline["vcs"]["branch"] == branch
+        target_pipeline = nil
+        target_workflow = nil
+        
+        # Continue searching for pipelines until we find one with the target workflow
+        pipeline_page = 1
+        max_pages_to_search = 10 # Limit how far back we search to avoid excessive API calls
+        
+        while target_workflow.nil? && pipeline_page <= max_pages_to_search
+          if pipeline_page > 1
+            UI.important("Workflow '#{workflow_name}' not found in recent pipelines. Checking older pipelines (page #{pipeline_page})...")
+            # Get older pipelines with pagination
+            pipelines = Helper::CircleCiHelper.get_v2("project/#{project_slug}/pipeline", api_token, { page: pipeline_page })
+          end
+          
+          # Check each pipeline on this page for the target branch and workflow
+          pipelines["items"].each do |pipeline|
+            next unless pipeline["vcs"] && pipeline["vcs"]["branch"] == branch
+            
+            UI.message("Checking pipeline ##{pipeline['number']} on #{branch} branch...")
+            
+            # Get the workflows for this pipeline
+            workflows = Helper::CircleCiHelper.get_v2("pipeline/#{pipeline["id"]}/workflow", api_token)
+            
+            # Find the target workflow
+            workflow = workflows["items"].find { |w| w["name"] == workflow_name }
+            
+            if workflow
+              target_pipeline = pipeline
+              target_workflow = workflow
+              UI.success("Found #{workflow_name} workflow in pipeline ##{pipeline["number"]}")
+              break
+            end
+          end
+          
+          pipeline_page += 1
         end
         
         if target_pipeline.nil?
           UI.user_error!("No pipeline found for #{branch} branch")
-        else
-          UI.success("Found pipeline for #{branch}: ##{target_pipeline["number"]}")
         end
         
-        # Get the workflows for the pipeline
-        workflows = Helper::CircleCiHelper.get_v2("pipeline/#{target_pipeline["id"]}/workflow", api_token)
-        
-        # Find the target workflow
-        target_workflow = workflows["items"].find { |w| w["name"] == workflow_name }
-        
         if target_workflow.nil?
-          UI.user_error!("No '#{workflow_name}' workflow found in pipeline ##{target_pipeline["number"]}")
+          UI.user_error!("No '#{workflow_name}' workflow found in any recent pipelines for #{branch} branch")
         else
-          UI.success("Found #{workflow_name} workflow: #{target_workflow["id"]}")
+          UI.success("Using #{workflow_name} workflow: #{target_workflow["id"]} from pipeline ##{target_pipeline["number"]}")
         end
         
         # Get the jobs for the workflow
