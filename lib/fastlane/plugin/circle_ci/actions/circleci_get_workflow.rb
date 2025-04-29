@@ -63,7 +63,7 @@ module Fastlane
       end
 
       def self.authors
-        ["crazymanish, "copilot""]
+        ["crazymanish", "copilot"]
       end
 
       def self.example_code
