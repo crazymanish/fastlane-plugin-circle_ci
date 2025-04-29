@@ -1,3 +1,13 @@
 lane :test do
   circle_ci
 end
+
+desc "Download artifacts from the latest 'test' workflow for master branch"
+lane :download_master_test_artifacts do |options|
+  circleci_download_workflow_artifacts(
+    project_slug: options[:project_slug] || ENV["CIRCLE_CI_PROJECT_SLUG"],
+    branch: "master",
+    workflow_name: "test",
+    destination_dir: options[:destination_dir] || "./artifacts"
+  )
+end
