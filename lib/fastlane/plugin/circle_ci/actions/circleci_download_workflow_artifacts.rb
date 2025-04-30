@@ -12,15 +12,56 @@ module Fastlane
       def self.run(params)
         UI.message("Downloading artifacts from CircleCI workflow...")
         
-        api_token = params[:api_token]
-        project_slug = params[:project_slug]
-        branch = params[:branch]
-        workflow_name = params[:workflow_name]
-        destination_dir = params[:destination_dir]
+        # Extract parameters
+        api_token, project_slug, branch, workflow_name, destination_dir, file_extensions = extract_params(params)
         
         # Create destination directory if it doesn't exist
         FileUtils.mkdir_p(destination_dir)
         
+        # Find the target pipeline and workflow
+        target_pipeline, target_workflow = find_target_pipeline_and_workflow(api_token, project_slug, branch, workflow_name)
+        
+        # Get the jobs for the workflow and download artifacts
+        downloaded_artifacts, total_artifacts = download_job_artifacts(
+          api_token, 
+          project_slug, 
+          target_workflow, 
+          workflow_name, 
+          destination_dir,
+          file_extensions
+        )
+        
+        # Store values in lane context
+        Actions.lane_context[SharedValues::CIRCLECI_DOWNLOADED_ARTIFACTS] = downloaded_artifacts
+        
+        # Prepare and return the result
+        result = prepare_result(
+          target_workflow,
+          workflow_name,
+          target_pipeline,
+          branch,
+          total_artifacts,
+          downloaded_artifacts,
+          destination_dir
+        )
+        
+        UI.success("Downloaded #{total_artifacts} artifacts from the '#{workflow_name}' workflow on #{branch} branch to #{destination_dir}")
+        
+        return result
+      end
+
+      def self.extract_params(params)
+        [
+          params[:api_token],
+          params[:project_slug],
+          params[:branch],
+          params[:workflow_name],
+          params[:destination_dir],
+          params[:file_extensions]
+        ]
+      end
+
+      def self.find_target_pipeline_and_workflow(api_token, project_slug, branch, workflow_name)
         UI.important("Looking for the latest pipeline on #{branch} branch...")
         
         # Get recent pipelines for the project
@@ -50,13 +91,13 @@ module Fastlane
             # Get the workflows for this pipeline
             workflows = Helper::CircleCiHelper.get_v2("pipeline/#{pipeline["id"]}/workflow", api_token)
             
-            # Find the target workflow
-            workflow = workflows["items"].find { |w| w["name"] == workflow_name }
+            # Find the target workflow with status "success"
+            workflow = workflows["items"].find { |w| w["name"] == workflow_name && w["status"] == "success" }
             
             if workflow
               target_pipeline = pipeline
               target_workflow = workflow
-              UI.success("Found #{workflow_name} workflow in pipeline ##{pipeline["number"]}")
+              UI.success("Found #{workflow_name} workflow with status 'success' in pipeline ##{pipeline["number"]}")
               break
             end
           end
@@ -69,11 +110,15 @@ module Fastlane
         end
         
         if target_workflow.nil?
-          UI.user_error!("No '#{workflow_name}' workflow found in any recent pipelines for #{branch} branch")
+          UI.user_error!("No successful '#{workflow_name}' workflow found in any recent pipelines for #{branch} branch")
         else
           UI.success("Using #{workflow_name} workflow: #{target_workflow["id"]} from pipeline ##{target_pipeline["number"]}")
         end
         
+        return [target_pipeline, target_workflow]
+      end
+
+      def self.download_job_artifacts(api_token, project_slug, target_workflow, workflow_name, destination_dir, file_extensions = nil)
         # Get the jobs for the workflow
         jobs_result = Helper::CircleCiHelper.get_v2("workflow/#{target_workflow["id"]}/job", api_token)
         jobs = jobs_result["items"]
@@ -85,75 +130,124 @@ module Fastlane
         total_artifacts = 0
         
         jobs.each do |job|
-          UI.message("Getting artifacts for job: #{job["name"]}")
+          job_artifacts = download_artifacts_for_job(api_token, project_slug, job, destination_dir, file_extensions)
           
-          # Skip jobs with no number (haven't run yet)
-          next unless job["job_number"]
-          
-          # Get artifacts for this job
-          artifacts_result = Helper::CircleCiHelper.get_v2("project/#{project_slug}/#{job["job_number"]}/artifacts", api_token)
-          artifacts = artifacts_result["items"]
-          
-          if artifacts.empty?
-            UI.message("No artifacts found for job: #{job["name"]}")
-            next
+          if !job_artifacts.empty?
+            downloaded_artifacts << {
+              job_name: job["name"],
+              job_number: job["job_number"],
+              artifacts: job_artifacts
+            }
+            total_artifacts += job_artifacts.count
           end
-          
-          UI.success("Found #{artifacts.count} artifacts for job: #{job["name"]}")
-          
-          # Download each artifact
-          job_artifacts = []
-          
-          artifacts.each do |artifact|
-            job_dir = File.join(destination_dir, job["name"])
-            FileUtils.mkdir_p(job_dir)
-            
-            artifact_filename = File.basename(artifact["path"])
-            download_path = File.join(job_dir, artifact_filename)
-            
-            UI.message("Downloading artifact: #{artifact["path"]} to #{download_path}")
-            
-            # Configure Faraday
-            conn = Faraday.new do |f|
-              f.headers['Circle-Token'] = api_token if api_token
-              f.response :follow_redirects
-              f.adapter Faraday.default_adapter
-            end
-            
-            # Download the file
-            begin
-              response = conn.get(artifact["url"])
-              
-              if response.status >= 200 && response.status < 300
-                # Write the response body to the destination file
-                File.binwrite(download_path, response.body)
-                job_artifacts << {
-                  job_name: job["name"],
-                  artifact_path: artifact["path"],
-                  url: artifact["url"],
-                  download_path: download_path
-                }
-                total_artifacts += 1
-                UI.success("Successfully downloaded artifact to #{download_path}")
-              else
-                UI.error("Failed to download artifact: HTTP #{response.status}")
-              end
-            rescue => e
-              UI.error("Error downloading artifact: #{e.message}")
-            end
-          end
-          
-          downloaded_artifacts << {
-            job_name: job["name"],
-            job_number: job["job_number"],
-            artifacts: job_artifacts
-          } unless job_artifacts.empty?
         end
         
-        # Store values in lane context
-        Actions.lane_context[SharedValues::CIRCLECI_DOWNLOADED_ARTIFACTS] = downloaded_artifacts
+        return [downloaded_artifacts, total_artifacts]
+      end
+
+      def self.download_artifacts_for_job(api_token, project_slug, job, destination_dir, file_extensions = nil)
+        UI.message("Getting artifacts for job: #{job["name"]}")
         
-        result = {
+        # Skip jobs with no number (haven't run yet)
+        return [] unless job["job_number"]
+        
+        # Get artifacts for this job
+        artifacts_result = Helper::CircleCiHelper.get_v2("project/#{project_slug}/#{job["job_number"]}/artifacts", api_token)
+        artifacts = artifacts_result["items"]
+        
+        if artifacts.empty?
+          UI.message("No artifacts found for job: #{job["name"]}")
+          return []
+        end
+        
+        # Filter artifacts by extension if specified
+        if file_extensions
+          extensions = file_extensions.is_a?(Array) ? file_extensions : [file_extensions.to_s]
+          filtered_artifacts = filter_artifacts_by_extension(artifacts, extensions)
+          
+          if filtered_artifacts.empty?
+            UI.message("No artifacts with extensions #{extensions.join(', ')} found for job: #{job["name"]}")
+            return []
+          end
+          
+          UI.success("Found #{filtered_artifacts.count} artifacts with extensions #{extensions.join(', ')} for job: #{job["name"]}")
+          artifacts = filtered_artifacts
+        else
+          UI.success("Found #{artifacts.count} artifacts for job: #{job["name"]}")
+        end
+        
+        # Download each artifact
+        download_artifacts(api_token, job["name"], artifacts, destination_dir)
+      end
+      
+      def self.filter_artifacts_by_extension(artifacts, extensions)
+        artifacts.select do |artifact|
+          # Get the file extension from the path
+          ext = File.extname(artifact["path"]).delete('.')
+          extensions.include?(ext.downcase)
+        end
+      end
+      
+      def self.download_artifacts(api_token, job_name, artifacts, destination_dir)
+        job_artifacts = []
+        
+        artifacts.each do |artifact|
+          download_path = prepare_download_path(destination_dir, job_name, artifact)
+          
+          if download_artifact(api_token, artifact, download_path)
+            job_artifacts << {
+              job_name: job_name,
+              artifact_path: artifact["path"],
+              url: artifact["url"],
+              download_path: download_path
+            }
+          end
+        end
+        
+        return job_artifacts
+      end
+
+      def self.prepare_download_path(destination_dir, job_name, artifact)
+        job_dir = File.join(destination_dir, job_name)
+        FileUtils.mkdir_p(job_dir)
+        
+        artifact_filename = File.basename(artifact["path"])
+        File.join(job_dir, artifact_filename)
+      end
+
+      def self.download_artifact(api_token, artifact, download_path)
+        UI.message("Downloading artifact: #{artifact["path"]} to #{download_path}")
+        
+        # Configure Faraday
+        conn = Faraday.new do |f|
+          f.headers['Circle-Token'] = api_token if api_token
+          f.response :follow_redirects
+          f.adapter Faraday.default_adapter
+        end
+        
+        # Download the file
+        begin
+          response = conn.get(artifact["url"])
+          
+          if response.status >= 200 && response.status < 300
+            # Write the response body to the destination file
+            File.open(download_path, "wb") do |file|
+              file.write(response.body)
+            end
+            UI.success("Successfully downloaded artifact to #{download_path}")
+            return true
+          else
+            UI.error("Failed to download artifact: HTTP #{response.status}")
+            return false
+          end
+        rescue => e
+          UI.error("Error downloading artifact: #{e.message}")
+          return false
+        end
+      end
+
+      def self.prepare_result(target_workflow, workflow_name, target_pipeline, branch, total_artifacts, downloaded_artifacts, destination_dir)
+        {
           workflow_id: target_workflow["id"],
           workflow_name: workflow_name,
           pipeline_number: target_pipeline["number"],
@@ -163,10 +257,6 @@ module Fastlane
           downloaded_artifacts: downloaded_artifacts,
           destination_dir: destination_dir
         }
-        
-        UI.success("Downloaded #{total_artifacts} artifacts from the '#{workflow_name}' workflow on #{branch} branch to #{destination_dir}")
-        
-        return result
       end
 
       def self.description
@@ -212,6 +302,12 @@ module Fastlane
                                        description: "Directory where artifacts should be saved",
                                        is_string: true,
                                        default_value: "./artifacts",
+                                       optional: true),
+          FastlaneCore::ConfigItem.new(key: :file_extensions,
+                                       env_name: "CIRCLE_CI_ARTIFACT_FILE_EXTENSIONS",
+                                       description: "File extensions to download (e.g. 'json' or ['json', 'xml']). If provided, only files with these extensions will be downloaded",
+                                       is_string: false,
+                                       default_value: "json",
                                        optional: true)
         ]
       end
@@ -232,6 +328,20 @@ module Fastlane
 
       def self.example_code
         [
+          '# Download only JSON files (default)
+          circleci_download_workflow_artifacts(
+            project_slug: "github/myorg/myrepo"
+          )',
+          '# Download only XML files
+          circleci_download_workflow_artifacts(
+            project_slug: "github/myorg/myrepo",
+            file_extensions: "xml"
+          )',
+          '# Download both JSON and XML files
+          circleci_download_workflow_artifacts(
+            project_slug: "github/myorg/myrepo",
+            file_extensions: ["json", "xml"]
+          )',
           'circleci_download_workflow_artifacts(
             project_slug: "github/myorg/myrepo"
           )',

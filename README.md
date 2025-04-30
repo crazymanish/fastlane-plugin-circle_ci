@@ -176,23 +176,22 @@ end
 ### Downloading Artifacts
 
 ```ruby
-# Get artifacts from a job
-artifacts = circleci_get_job_artifacts(
-  project_slug: "github/myorg/myrepo",
-  job_number: "123"
+# Download only JSON files (default)
+circleci_download_workflow_artifacts(
+  project_slug: "github/myorg/myrepo"
 )
 
-# Download a specific artifact
-if artifacts.any?
-  test_results = artifacts.find { |a| a["path"].end_with?("test-results.xml") }
-  
-  if test_results
-    circleci_download_artifact(
-      artifact_url: test_results["url"],
-      destination_path: "./test-results/circle-results.xml"
-    )
-  end
-end
+# Download only XML files
+circleci_download_workflow_artifacts(
+  project_slug: "github/myorg/myrepo",
+  file_extensions: "xml"
+)
+
+# Download both JSON and XML files
+circleci_download_workflow_artifacts(
+  project_slug: "github/myorg/myrepo",
+  file_extensions: ["json", "xml"]
+)
 
 # Download all artifacts from a specific workflow
 artifacts_info = circleci_download_workflow_artifacts(
@@ -212,6 +211,24 @@ artifacts_info[:downloaded_artifacts].each do |job_artifacts|
     path = artifact[:download_path]
     # Process artifact files as needed
     puts "Processing #{path} from job #{job_name}"
+  end
+end
+
+# Get artifacts from a job
+artifacts = circleci_get_job_artifacts(
+  project_slug: "github/myorg/myrepo",
+  job_number: "123"
+)
+
+# Download a specific artifact
+if artifacts.any?
+  test_results = artifacts.find { |a| a["path"].end_with?("test-results.xml") }
+  
+  if test_results
+    circleci_download_artifact(
+      artifact_url: test_results["url"],
+      destination_path: "./test-results/circle-results.xml"
+    )
   end
 end
 ```
