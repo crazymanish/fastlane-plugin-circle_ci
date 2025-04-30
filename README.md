@@ -193,6 +193,12 @@ circleci_download_workflow_artifacts(
   file_extensions: ["json", "xml"]
 )
 
+# Download artifacts from a specific job only
+circleci_download_workflow_artifacts(
+  project_slug: "github/myorg/myrepo",
+  job_name: "build"
+)
+
 # Download all artifacts from a specific workflow
 artifacts_info = circleci_download_workflow_artifacts(
   project_slug: "github/myorg/myrepo",

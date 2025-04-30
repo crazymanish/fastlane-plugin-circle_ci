@@ -13,7 +13,7 @@ module Fastlane
         UI.message("Downloading artifacts from CircleCI workflow...")
         
         # Extract parameters
-        api_token, project_slug, branch, workflow_name, destination_dir, file_extensions = extract_params(params)
+        api_token, project_slug, branch, workflow_name, job_name, destination_dir, file_extensions = extract_params(params)
         
         # Create destination directory if it doesn't exist
         FileUtils.mkdir_p(destination_dir)
@@ -28,7 +28,8 @@ module Fastlane
           target_workflow, 
           workflow_name, 
           destination_dir,
-          file_extensions
+          file_extensions,
+          job_name
         )
         
         # Store values in lane context
@@ -56,6 +57,7 @@ module Fastlane
           params[:project_slug],
           params[:branch],
           params[:workflow_name],
+          params[:job_name],
           params[:destination_dir],
           params[:file_extensions]
         ]
@@ -118,12 +120,21 @@ module Fastlane
         return [target_pipeline, target_workflow]
       end
 
-      def self.download_job_artifacts(api_token, project_slug, target_workflow, workflow_name, destination_dir, file_extensions = nil)
+      def self.download_job_artifacts(api_token, project_slug, target_workflow, workflow_name, destination_dir, file_extensions = nil, job_name = nil)
         # Get the jobs for the workflow
         jobs_result = Helper::CircleCiHelper.get_v2("workflow/#{target_workflow["id"]}/job", api_token)
         jobs = jobs_result["items"]
         
         UI.important("Found #{jobs.count} jobs in the #{workflow_name} workflow")
+        
+        # Filter jobs by name if specified
+        if job_name
+          jobs = jobs.select { |job| job["name"] == job_name }
+          if jobs.empty?
+            UI.user_error!("No job found with name '#{job_name}' in the #{workflow_name} workflow")
+          end
+          UI.important("Filtering to only download artifacts from job: #{job_name}")
+        end
         
         # Download artifacts for each job
         downloaded_artifacts = []
@@ -297,6 +308,11 @@ module Fastlane
                                        is_string: true,
                                        default_value: "test",
                                        optional: true),
+          FastlaneCore::ConfigItem.new(key: :job_name,
+                                       env_name: "CIRCLE_CI_JOB_NAME",
+                                       description: "The name of a specific job to download artifacts from (if not provided, artifacts from all jobs will be downloaded)",
+                                       is_string: true,
+                                       optional: true),
           FastlaneCore::ConfigItem.new(key: :destination_dir,
                                        env_name: "CIRCLE_CI_ARTIFACT_DESTINATION_DIR",
                                        description: "Directory where artifacts should be saved",
@@ -341,6 +357,11 @@ module Fastlane
           circleci_download_workflow_artifacts(
             project_slug: "github/myorg/myrepo",
             file_extensions: ["json", "xml"]
+          )',
+          '# Download artifacts from a specific job only
+          circleci_download_workflow_artifacts(
+            project_slug: "github/myorg/myrepo",
+            job_name: "build"
           )',
           'circleci_download_workflow_artifacts(
             project_slug: "github/myorg/myrepo"
