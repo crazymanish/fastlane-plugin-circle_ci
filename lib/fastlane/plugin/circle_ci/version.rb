@@ -1,5 +1,5 @@
 module Fastlane
   module CircleCi
-    VERSION = "0.4.0"
+    VERSION = "0.3.0"
   end
 end
